@@ -1,73 +1,55 @@
-"""
-Answer Scoring Module
-Uses Claude to evaluate an interview answer on multiple dimensions,
-then blends in NLP-based signals (filler-word usage) as a penalty.
-"""
-
 import json
-import re
-from anthropic import Anthropic
-
-from .nlp_metrics import compute_metrics
+from groq import Groq
 
 
 class AnswerScorer:
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
-        self.client = Anthropic(api_key=api_key)
-        self.model = model
-
+    def __init__(self, api_key: str):
+        self.client = Groq(api_key=api_key)
+        self.model = "llama-3.3-70b-versatile"
+    
     def score_answer(self, question: str, answer: str, role: str) -> dict:
-        metrics = compute_metrics(answer)
-
-        prompt = f"""You are an expert technical interviewer evaluating a candidate's spoken answer
-for a "{role}" position.
+        """Score the answer based on relevance, clarity, technical depth, communication"""
+        
+        prompt = f"""Score this interview answer on a scale of 1-10 for each criterion:
 
 Question: {question}
-Candidate's answer (transcribed from speech): {answer if answer.strip() else "[No answer given]"}
+Answer: {answer}
+Role: {role}
 
-Score the answer from 0-10 on each dimension below. Be strict and realistic;
-a vague or empty answer should score low.
+Score each criterion (1-10):
+1. Relevance: How relevant is the answer to the question?
+2. Clarity: How clear and well-structured is the answer?
+3. Technical Depth: How technically accurate and deep is the answer?
+4. Communication: How well does the person communicate their ideas?
 
-Return ONLY valid JSON (no markdown) with this exact structure:
+Return ONLY JSON in this format:
 {{
-  "relevance": <0-10>,
-  "clarity": <0-10>,
-  "technical_depth": <0-10>,
-  "communication": <0-10>,
-  "overall": <0-10>,
-  "justification": "<2-3 sentence explanation>"
-}}
-"""
+    "relevance": 8,
+    "clarity": 7,
+    "technical_depth": 9,
+    "communication": 8,
+    "overall": 8
+}}"""
 
-        response = self.client.messages.create(
+        response = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=500
         )
-
-        raw_text = "".join(b.text for b in response.content if b.type == "text")
-        scores = self._parse_scores(raw_text)
-
-        # Light penalty for excessive filler words, never below 0
-        if metrics["filler_ratio"] > 0.08:
-            penalty = min(1.5, metrics["filler_ratio"] * 10)
-            scores["overall"] = max(0, round(scores["overall"] - penalty, 1))
-
-        scores["metrics"] = metrics
-        return scores
-
-    @staticmethod
-    def _parse_scores(raw_text: str) -> dict:
-        cleaned = re.sub(r"^```(json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
+        
+        scores_text = response.choices[0].message.content
+        
         try:
-            data = json.loads(cleaned)
-            for key in ("relevance", "clarity", "technical_depth", "communication", "overall"):
-                data.setdefault(key, 0)
-            data.setdefault("justification", "")
-            return data
+            scores = json.loads(scores_text)
+            return scores
         except json.JSONDecodeError:
             return {
-                "relevance": 0, "clarity": 0, "technical_depth": 0,
-                "communication": 0, "overall": 0,
-                "justification": "Could not parse model response.",
+                "relevance": 5,
+                "clarity": 5,
+                "technical_depth": 5,
+                "communication": 5,
+                "overall": 5
             }

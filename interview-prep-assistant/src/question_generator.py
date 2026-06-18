@@ -1,30 +1,23 @@
-"""
-Question Generator Module
-Generates role-specific interview questions using Claude (Anthropic LLM).
-"""
-
 import json
 import re
-from anthropic import Anthropic
+from groq import Groq
 
 
 class QuestionGenerator:
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
-        self.client = Anthropic(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
+        self.client = Groq(api_key=api_key)
         self.model = model
+
 
     def generate_questions(self, role: str, experience_level: str,
                             num_questions: int = 5,
                             question_mix: str = "balanced") -> list:
-        """
-        Generate a list of interview questions.
-        Returns a list of dicts: {"question": str, "type": str, "difficulty": str}
-        """
         mix_instructions = {
             "technical": "Focus mostly on technical/domain questions.",
             "behavioral": "Focus mostly on behavioral/HR questions.",
             "balanced": "Mix technical, behavioral, and situational questions evenly.",
         }.get(question_mix, "Mix technical, behavioral, and situational questions evenly.")
+
 
         prompt = f"""You are an experienced technical recruiter preparing an interview.
 
@@ -33,26 +26,36 @@ Candidate experience level: {experience_level}
 Number of questions: {num_questions}
 Instruction: {mix_instructions}
 
+CRITICAL: Generate {num_questions} completely UNIQUE questions with NO repetition.
+- Each question must cover a DIFFERENT topic/skill
+- NO duplicate or similar questions
+- Vary the difficulty levels
+- Cover different aspects of the role
+
 Return ONLY a valid JSON array (no markdown, no commentary) where each item has:
 - "question": the interview question text
-- "type": one of "technical", "behavioral", "situational"
+- "type": one of "technical", "behavioral", "situational"  
 - "difficulty": one of "easy", "medium", "hard"
 
 Example format:
-[{{"question": "...", "type": "technical", "difficulty": "medium"}}]
-"""
+[{{"question": "...", "type": "technical", "difficulty": "medium"}}]"""
 
-        response = self.client.messages.create(
+
+        response = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=1500,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
         )
 
-        raw_text = "".join(
-            block.text for block in response.content if block.type == "text"
-        )
+
+        raw_text = response.choices[0].message.content
+
 
         return self._parse_questions(raw_text, num_questions)
+
 
     @staticmethod
     def _parse_questions(raw_text: str, num_questions: int) -> list:
@@ -64,6 +67,6 @@ Example format:
         except json.JSONDecodeError:
             pass
 
-        # Fallback: treat each non-empty line as a question
+
         lines = [l.strip("-• ").strip() for l in raw_text.splitlines() if l.strip()]
         return [{"question": q, "type": "general", "difficulty": "medium"} for q in lines[:num_questions]]
